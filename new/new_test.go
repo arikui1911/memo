@@ -1,8 +1,8 @@
-package main
+package new
 
 import "testing"
 
-func TestFilterTmpl(t *testing.T) {
+func TestNewFilterTmpl(t *testing.T) {
 	input := `title: {{_title_}}
 ==========
 title: {{_title_}}
