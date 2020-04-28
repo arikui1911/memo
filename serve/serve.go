@@ -13,7 +13,6 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/pkg/browser"
 
-	// "github.com/yuin/goldmark"
 	"github.com/shurcooL/github_flavored_markdown"
 	"github.com/shurcooL/github_flavored_markdown/gfmstyle"
 	"github.com/urfave/cli/v2"
