@@ -12,6 +12,8 @@ import (
 	"github.com/arikui1911/memo/memo"
 	"github.com/mattn/go-runewidth"
 	"github.com/pkg/browser"
+
+	// "github.com/yuin/goldmark"
 	"github.com/shurcooL/github_flavored_markdown"
 	"github.com/shurcooL/github_flavored_markdown/gfmstyle"
 	"github.com/urfave/cli/v2"
@@ -99,41 +101,44 @@ li {list-style-type: none;}
 `
 
 func (c *serveConfig) handleList(w http.ResponseWriter, req *http.Request) {
-	f, err := os.Open(c.memoDir)
+	files, err := getDirMarkdownFiles(c.memoDir)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer f.Close()
-	files, err := f.Readdirnames(-1)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	files = memo.FilterMarkdown(files)
-	var entries []entry
-	for _, file := range files {
-		entries = append(entries, entry{
-			Name: file,
-			Body: template.HTML(runewidth.Truncate(memo.ReadFileFirstLine(filepath.Join(c.memoDir, file)), 80, "...")),
-		})
-	}
+	entries := makeEntries(files, c.memoDir)
 	w.Header().Set("content-type", "text/html")
-	c.templateDirFile = memo.ExpandPath(c.templateDirFile)
-	var t *template.Template
-	if c.templateDirFile == "" {
-		t = template.Must(template.New("dir").Parse(templateDirContent))
-	} else {
-		t, err = template.ParseFiles(c.templateDirFile)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	t, err := prepareTemplate(memo.ExpandPath(c.templateDirFile), templateDirContent)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	err = t.Execute(w, entries)
 	if err != nil {
 		log.Println(err)
 	}
+}
+
+func getDirMarkdownFiles(dir string) ([]string, error) {
+	f, err := os.Open(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	files, err := f.Readdirnames(-1)
+	if err != nil {
+		return nil, err
+	}
+	return memo.FilterMarkdown(files), nil
+}
+
+func makeEntries(files []string, dir string) []entry {
+	entries := make([]entry, len(files))
+	for i, file := range files {
+		entries[i].Name = file
+		entries[i].Body = template.HTML(runewidth.Truncate(memo.ReadFileFirstLine(filepath.Join(dir, file)), 80, "..."))
+	}
+	return entries
 }
 
 const templateBodyContent = `
@@ -150,31 +155,48 @@ const templateBodyContent = `
 `
 
 func (c *serveConfig) handleEntry(w http.ResponseWriter, req *http.Request) {
-	b, err := ioutil.ReadFile(filepath.Join(c.memoDir, memo.EscapeMemoTitle(req.URL.Path)))
+	src, err := readFile(filepath.Join(c.memoDir, memo.EscapeMemoTitle(req.URL.Path)))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	body := string(b)
-	if strings.HasPrefix(body, "---\n") {
-		if pos := strings.Index(body[4:], "---\n"); pos > 0 {
-			body = body[4+pos+4:]
-		}
-	}
-	body = string(github_flavored_markdown.Markdown([]byte(body)))
-	c.templateBodyFile = memo.ExpandPath(c.templateBodyFile)
-	var t *template.Template
-	if c.templateBodyFile == "" {
-		t = template.Must(template.New("body").Parse(templateBodyContent))
-	} else {
-		t, err = template.ParseFiles(c.templateBodyFile)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	body := compileMarkdown(extractNotFrontMatter(src))
+	t, err := prepareTemplate(c.templateBodyFile, templateBodyContent)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	t.Execute(w, entry{
 		Name: req.URL.Path,
 		Body: template.HTML(body),
 	})
+}
+
+func readFile(path string) (string, error) {
+	b, err := ioutil.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func extractNotFrontMatter(src string) string {
+	if !strings.HasPrefix(src, "---\n") {
+		return src
+	}
+	if pos := strings.Index(src[4:], "---\n"); pos > 0 {
+		return src[4+pos+4:]
+	}
+	return src
+}
+
+func compileMarkdown(src string) string {
+	return string(github_flavored_markdown.Markdown([]byte(src)))
+}
+
+func prepareTemplate(filePath string, defaultSrc string) (*template.Template, error) {
+	if len(filePath) == 0 {
+		return template.Must(template.New("body").Parse(defaultSrc)), nil
+	}
+	return template.ParseFiles(memo.ExpandPath(filePath))
 }
